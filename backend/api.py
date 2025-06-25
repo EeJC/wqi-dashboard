@@ -24,29 +24,38 @@ scaler = None
 features = None
 lookback = None  # Store the lookback period from the model
 
+# Global preload containers
+model_dict = {}
+data_dict = {}
 
 def load_model_and_data():
-    """Load the trained model and preprocessed data"""
-    global model, df, scaler, features, lookback
+    global model_dict, data_dict, lookback
 
-    print("⚙️ Loading data and model...")
-    try:
-        # Prepare data and load model
-        X_train, y_train, X_test, y_test, scaler, features, df, test_dates = prepare_data(
+    print("⚙️ Preloading all models and data...")
+    for choice in ['a', 'b', 'c', 'd']:
+        use_climate = choice in ['b', 'd']
+        use_volcanic = choice in ['c', 'd']
+
+        X_train, _, _, _, scaler, features, df, _ = prepare_data(
             'water_quality_data.csv',
-            use_climate=True,  # or True/False depending on what was used when training
-            use_volcanic = True,
+            use_climate=use_climate,
+            use_volcanic=use_volcanic
         )
-
-        lookback = X_train.shape[1]  # Get the lookback period from training data
+        lookback = X_train.shape[1]
 
         model = HybridModel(input_size=len(features), seq_length=lookback)
-        model.load_state_dict(torch.load('model_d.pth', map_location=torch.device('cpu')))
+        model.load_state_dict(torch.load(f'model_{choice}.pth', map_location='cpu'))
         model.eval()
-        print(f"✅ Model and data loaded successfully (Lookback: {lookback} months)")
-    except Exception as e:
-        print(f"❌ Error loading model: {str(e)}")
-        raise
+
+        model_dict[choice] = model
+        data_dict[choice] = {
+            'scaler': scaler,
+            'features': features,
+            'df': df
+        }
+
+    print("✅ All models and data preloaded.\n")
+
 
 
 
@@ -225,83 +234,33 @@ def handle_prediction():
         date_str = data.get('date')
         param_choice = data.get('parameterSet', 'a').lower()
 
-        if not date_str:
+        if not date_str or param_choice not in model_dict:
             return jsonify({
                 'status': 'error',
-                'message': 'Date is required'
+                'message': 'Missing or invalid date/parameter set'
             }), 400
 
-        # Validate and parse date
-        try:
-            date_obj = pd.to_datetime(date_str)
-            min_date = pd.to_datetime(df.index[0])
-            max_date = pd.to_datetime(df.index[-1] + pd.DateOffset(years=30))
-
-            if date_obj < min_date:
-                return jsonify({
-                    'status': 'error',
-                    'message': f'Date must be after {min_date.strftime("%Y-%m-%d")}'
-                }), 400
-
-            if date_obj > max_date:
-                return jsonify({
-                    'status': 'error',
-                    'message': f'Date must be before {max_date.strftime("%Y-%m-%d")}'
-                }), 400
-        except ValueError as e:
+        # Parse and validate date
+        date_obj = pd.to_datetime(date_str)
+        df = data_dict[param_choice]['df']
+        if date_obj < df.index[0]:
             return jsonify({
                 'status': 'error',
-                'message': f'Invalid date format: {str(e)}'
+                'message': f'Date must be after {df.index[0].strftime("%Y-%m-%d")}'
             }), 400
 
-        # Decide feature configuration based on parameter set
-        use_climate = False
-        use_volcanic = False
-
-        if param_choice == 'b':
-            use_climate = True
-        elif param_choice == 'c':
-            use_volcanic = True
-        elif param_choice == 'd':
-            use_climate = True
-            use_volcanic = True
-
-        # Prepare data and features using selected parameter set
-        try:
-            _, _, _, _, scaler, features, updated_df, _ = prepare_data(
-                'water_quality_data.csv',
-                use_climate=use_climate,
-                use_volcanic=use_volcanic
-            )
-        except Exception as e:
-            return jsonify({
-                'status': 'error',
-                'message': f'Failed to prepare data: {str(e)}'
-            }), 500
-
-        # Create and load model with correct input size
-        try:
-            model_path = f'model_{param_choice}.pth'
-
-            model_config = HybridModel(input_size=len(features), seq_length=lookback)
-            model_config.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
-            model_config.eval()
-        except Exception as e:
-            return jsonify({
-                'status': 'error',
-                'message': f'Model loading failed: {str(e)}'
-            }), 500
+        # Retrieve preloaded model and data
+        model = model_dict[param_choice]
+        scaler = data_dict[param_choice]['scaler']
+        features = data_dict[param_choice]['features']
 
         # Run prediction
-        prediction = predict(model_config, updated_df, scaler, features, date_obj)
-
+        prediction = predict(model, df, scaler, features, date_obj)
         if prediction is None:
             return jsonify({
                 'status': 'error',
                 'message': 'Prediction failed - insufficient historical data'
             }), 400
-
-        print("📊 Raw prediction:", prediction)
 
         wqi = float(prediction['WQI'])
         ammonia = float(prediction['Ammonia'])
@@ -321,8 +280,7 @@ def handle_prediction():
                 'modelInfo': {
                     'type': 'Hybrid CNN-LSTM',
                     'parameterSet': param_choice.upper(),
-                    'lookbackPeriod': f'{lookback} months',
-                    'lastTrained': os.path.getmtime(model_path)
+                    'lookbackPeriod': f'{lookback} months'
                 }
             }
         })
