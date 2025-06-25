@@ -308,9 +308,6 @@ print("🔄 load_model_and_data() is running...")
 load_model_and_data()
 
 if __name__ == '__main__':
-
-    print("🔄 load_model_and_data() is running...")
-    load_model_and_data()
     
     # Run the Flask app
     print("\n🌍 Server running at http://localhost:5000")
@@ -320,4 +317,5 @@ if __name__ == '__main__':
     print("   - POST /api/predict")
     print("   - GET  /api/health\n")
 
-    app.run(host='0.0.0.0', port=10000, debug=True)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
