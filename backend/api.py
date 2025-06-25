@@ -11,6 +11,8 @@ from main_torchHYBRID import prepare_data, HybridModel, predict, get_pollutant_l
 app = Flask(__name__, static_folder='../frontend', static_url_path='/')
 CORS(app)  # Enable CORS for all routes
 
+load_model_and_data()
+
 @app.route('/')
 def serve_index():
     return app.send_static_file('index.html')
@@ -345,9 +347,6 @@ def health_check():
 
 
 if __name__ == '__main__':
-    # Load model and data when starting the server
-    load_model_and_data()
-
     # Run the Flask app
     print("\n🌍 Server running at http://localhost:5000")
     print("🔌 API endpoints:")
